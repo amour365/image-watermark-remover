@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Canvas, FabricImage } from "fabric";
+import { Canvas, FabricImage, Path } from "fabric";
 
 interface CanvasEditorProps {
   imageUrl: string;
@@ -25,9 +25,25 @@ export default function CanvasEditor({
   const originalImageRef = useRef<AnyFabric>(null);
   const resultLayerRef = useRef<AnyFabric>(null);
   const [isReady, setIsReady] = useState(false);
+  const [dimensions, setDimensions] = useState({ width: 600, height: 400 });
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const isRestoringRef = useRef(false);
+
+  // Update dimensions on resize
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setDimensions({ width: Math.floor(width), height: Math.floor(height) });
+        }
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const saveState = useCallback(() => {
     if (!fabricRef.current || isRestoringRef.current) return;
@@ -62,25 +78,24 @@ export default function CanvasEditor({
     });
   }, [onUndoUpdate]);
 
-  // Expose to parent window
-  useEffect(() => {
-    const w = window as AnyFabric;
-    w._canvasUndo = handleUndo;
-    w._canvasRedo = handleRedo;
-  }, [handleUndo, handleRedo]);
-
   // Initialize Fabric canvas
   useEffect(() => {
     if (!canvasRef.current || !containerRef.current) return;
 
     const container = containerRef.current;
-    const { width, height } = container.getBoundingClientRect();
+    const rect = container.getBoundingClientRect();
+    const width = Math.max(rect.width, 300) || 600;
+    const height = Math.max(rect.height, 300) || 400;
 
-    const canvas = new Canvas(canvasRef.current, {
-      width: Math.max(width, 300),
-      height: Math.max(height, 300),
+    const canvasEl = canvasRef.current;
+    canvasEl.width = width;
+    canvasEl.height = height;
+
+    const canvas = new Canvas(canvasEl, {
+      width,
+      height,
       selection: false,
-      backgroundColor: "#0f0f23",
+      backgroundColor: "#1a1a2e",
     });
 
     fabricRef.current = canvas;
@@ -88,11 +103,12 @@ export default function CanvasEditor({
     // Enable free drawing mode
     canvas.isDrawingMode = true;
     if (canvas.freeDrawingBrush) {
-      canvas.freeDrawingBrush.color = "rgba(255, 0, 0, 0.6)";
+      canvas.freeDrawingBrush.color = "rgba(255, 100, 100, 0.8)";
       canvas.freeDrawingBrush.width = brushSize;
     }
 
-    canvas.on("path:created", () => {
+    canvas.on("path:created", (e: AnyFabric) => {
+      console.log("Path created!", e);
       saveState();
     });
 
@@ -111,10 +127,10 @@ export default function CanvasEditor({
 
     const canvas = fabricRef.current;
     canvas.clear();
-    canvas.backgroundColor = "#0f0f23";
+    canvas.backgroundColor = "#1a1a2e";
     canvas.isDrawingMode = true;
     if (canvas.freeDrawingBrush) {
-      canvas.freeDrawingBrush.color = "rgba(255, 0, 0, 0.6)";
+      canvas.freeDrawingBrush.color = "rgba(255, 100, 100, 0.8)";
       canvas.freeDrawingBrush.width = brushSize;
     }
     historyRef.current = [];
@@ -125,8 +141,8 @@ export default function CanvasEditor({
         if (!fabricRef.current || !containerRef.current) return;
 
         const cvs = fabricRef.current;
-        const containerW = containerRef.current.getBoundingClientRect().width || 600;
-        const containerH = containerRef.current.getBoundingClientRect().height || 400;
+        const containerW = dimensions.width;
+        const containerH = dimensions.height;
 
         const scale = Math.min(
           containerW / (img.width || 1),
@@ -134,10 +150,13 @@ export default function CanvasEditor({
           1
         );
 
+        const scaledW = (img.width || 0) * scale;
+        const scaledH = (img.height || 0) * scale;
+
         img.scale(scale);
         img.set({
-          left: (containerW - (img.width || 0) * scale) / 2,
-          top: (containerH - (img.height || 0) * scale) / 2,
+          left: (containerW - scaledW) / 2,
+          top: (containerH - scaledH) / 2,
           selectable: false,
           evented: false,
           hasBorders: false,
@@ -152,16 +171,19 @@ export default function CanvasEditor({
         console.error("Failed to load image:", err);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageUrl, isReady]);
+  }, [imageUrl, isReady, dimensions]);
 
   // Update brush size
   useEffect(() => {
-    if (!fabricRef.current?.freeDrawingBrush) return;
-    fabricRef.current.freeDrawingBrush.color = "rgba(255, 0, 0, 0.6)";
-    fabricRef.current.freeDrawingBrush.width = brushSize;
+    if (!fabricRef.current) return;
+    fabricRef.current.isDrawingMode = true;
+    if (fabricRef.current.freeDrawingBrush) {
+      fabricRef.current.freeDrawingBrush.color = "rgba(255, 100, 100, 0.8)";
+      fabricRef.current.freeDrawingBrush.width = brushSize;
+    }
   }, [brushSize]);
 
-  // Get mask data URL
+  // Get mask data URL - simplified approach
   const getMaskDataUrl = useCallback((): string | null => {
     if (!fabricRef.current || !originalImageRef.current) return null;
 
@@ -178,39 +200,63 @@ export default function CanvasEditor({
     maskCtx.fillStyle = "#000000";
     maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
 
-    // Draw paths as white (mask area)
-    const paths = canvas.getObjects().filter((obj) => obj.type === "path") as AnyFabric[];
-    maskCtx.fillStyle = "#FFFFFF";
+    // Get paths and draw them as white
+    const paths = canvas.getObjects().filter((obj: AnyFabric) => obj.type === "path") as AnyFabric[];
 
-    paths.forEach((path) => {
+    if (paths.length === 0) {
+      console.log("No paths found on canvas");
+      return null;
+    }
+
+    maskCtx.fillStyle = "#FFFFFF";
+    maskCtx.strokeStyle = "#FFFFFF";
+    maskCtx.lineWidth = 2;
+
+    const imgLeft = img.left || 0;
+    const imgTop = img.top || 0;
+    const sx = img.scaleX || 1;
+    const sy = img.scaleY || 1;
+
+    paths.forEach((path: AnyFabric) => {
       const pathData = path.path;
       if (!pathData) return;
 
-      const left = img.left || 0;
-      const top = img.top || 0;
-      const sx = img.scaleX || 1;
-      const sy = img.scaleY || 1;
+      // Convert Fabric path to SVG path string
+      let d = "";
+      pathData.forEach((segment: AnyFabric) => {
+        if (!segment || !Array.isArray(segment)) return;
+        const cmd = segment[0];
+        const args = segment.slice(1);
+        if (cmd === "M") d += `M ${args[0]} ${args[1]} `;
+        else if (cmd === "L") d += `L ${args[0]} ${args[1]} `;
+        else if (cmd === "Q") d += `Q ${args[0]} ${args[1]} ${args[2]} ${args[3]} `;
+        else if (cmd === "C") d += `C ${args[0]} ${args[1]} ${args[2]} ${args[3]} ${args[4]} ${args[5]} `;
+        else if (cmd === "A") d += `A ${args[0]} ${args[1]} ${args[2]} ${args[3]} ${args[4]} ${args[5]} ${args[6]} `;
+        else if (cmd === "Z" || cmd === "z") d += "Z ";
+      });
 
-      const fabricUtil = (window as AnyFabric).fabric?.util;
-      if (!fabricUtil) return;
+      if (!d) return;
 
-      const svgPath = fabricUtil.joinPath(pathData);
-      const tempPath = new (window as AnyFabric).fabric.Path(svgPath, {
+      const path2d = new Path(d, {
         left: path.left || 0,
         top: path.top || 0,
         scaleX: path.scaleX || 1,
         scaleY: path.scaleY || 1,
-        fill: "#FFFFFF",
-        stroke: "#FFFFFF",
-        strokeWidth: 0,
-      });
+      } as AnyFabric);
 
-      tempPath.left = left + (path.left || 0) * sx;
-      tempPath.top = top + (path.top || 0) * sy;
-      tempPath.scaleX = sx * (path.scaleX || 1);
-      tempPath.scaleY = sy * (path.scaleY || 1);
-      tempPath.transform = path.transform;
-      tempPath._render(maskCtx);
+      const absX = imgLeft + (path2d.left || 0) * sx;
+      const absY = imgTop + (path2d.top || 0) * sy;
+      const absScaleX = sx * (path.scaleX || 1);
+      const absScaleY = sy * (path.scaleY || 1);
+
+      maskCtx.save();
+      maskCtx.translate(absX, absY);
+      maskCtx.scale(absScaleX, absScaleY);
+
+      const pathEl = new Path(d, { left: 0, top: 0 } as AnyFabric);
+      const pathCanvas = pathEl.toCanvasElement();
+      maskCtx.drawImage(pathCanvas, 0, 0);
+      maskCtx.restore();
     });
 
     return maskCanvas.toDataURL("image/png");
@@ -222,7 +268,7 @@ export default function CanvasEditor({
 
     const canvas = fabricRef.current;
     const objects = canvas.getObjects();
-    objects.forEach((obj) => {
+    objects.forEach((obj: AnyFabric) => {
       if (obj === originalImageRef.current || obj.type === "path") {
         obj.visible = false;
       }
@@ -256,7 +302,7 @@ export default function CanvasEditor({
     if (!fabricRef.current || !originalImageRef.current) return;
     const canvas = fabricRef.current;
     const objects = canvas.getObjects();
-    objects.forEach((obj) => {
+    objects.forEach((obj: AnyFabric) => {
       if (obj !== originalImageRef.current && obj !== resultLayerRef.current) {
         canvas.remove(obj);
       }
@@ -272,11 +318,25 @@ export default function CanvasEditor({
     onUndoUpdate(false, false);
   }, [onUndoUpdate]);
 
+  // Expose functions to window
   useEffect(() => {
     const w = window as AnyFabric;
+    w._canvasUndo = handleUndo;
+    w._canvasRedo = handleRedo;
     w._getMaskDataUrl = getMaskDataUrl;
     w._canvasReset = handleReset;
-  }, [getMaskDataUrl, handleReset]);
+    w._canvasDebug = () => {
+      if (!fabricRef.current) return "No canvas";
+      const paths = fabricRef.current.getObjects().filter((o: AnyFabric) => o.type === "path");
+      return {
+        isDrawingMode: fabricRef.current.isDrawingMode,
+        pathCount: paths.length,
+        canvasWidth: fabricRef.current.width,
+        canvasHeight: fabricRef.current.height,
+        brushWidth: fabricRef.current.freeDrawingBrush?.width,
+      };
+    };
+  }, [handleUndo, handleRedo, getMaskDataUrl, handleReset]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -295,7 +355,11 @@ export default function CanvasEditor({
   }, [handleUndo, handleRedo]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full flex-1 overflow-hidden">
+    <div
+      ref={containerRef}
+      className="relative w-full h-full"
+      style={{ minWidth: "300px", minHeight: "300px" }}
+    >
       <canvas ref={canvasRef} />
       {!isReady && (
         <div className="absolute inset-0 flex items-center justify-center">
