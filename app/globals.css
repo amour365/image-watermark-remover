@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0f0f23;
+  --text: #e2e8f0;
+  --accent: #7c3aed;
+  --accent2: #3b82f6;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #7c3aed, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #7c3aed, #3b82f6);
+}
+
+.gradient-border {
+  border-image: linear-gradient(135deg, #7c3aed, #3b82f6) 1;
+}
+
+canvas {
+  touch-action: none;
+}
